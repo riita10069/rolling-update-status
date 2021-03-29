@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  labels:
+    app: nginx
+  annotations:
+    wantedly.com/deploy-target: "true"
+    wantedly.com/deploy-target-container: nginx
+    wantedly.com/github: nginx=wantedly/nginx
+    wantedly.com/generated-by: manual
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.12.2
+        ports:
+        - containerPort: 80
