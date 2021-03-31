@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"github.com/riita10069/rolling-update-status/controllers/pkg"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -52,15 +53,41 @@ func (r *DeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 	}
 	r.StoreRepo = pkg.NewStore(dply)
 
-	_, status, err := pkg.RolloutStatus(dply)
+	stmt, status, err := pkg.RolloutStatus(dply)
+	fmt.Println("rollout status", stmt, status)
+	if stmt == pkg.RevisionNotFound {
+		return ctrl.Result{Requeue: true}, nil
+	}
 	if err != nil {
 		return reconcile.Result{}, err
+	}
+	if stmt == pkg.TimedOutReason {
+		var failed bool
+		if failed, err = pkg.IsJustDeployFailed(dply, r.Client); err != nil {
+			if err == pkg.NewReplicaSetNotFound {
+				return ctrl.Result{Requeue: true}, err
+			} else {
+				return ctrl.Result{}, err
+			}
+		}
+		if !failed {
+			return ctrl.Result{}, nil
+		} else {
+			if err := r.StoreRepo.Create("failed", "error: timed out waiting for any update progress to be made"); err != nil {
+				return ctrl.Result{}, err
+			}
+			return reconcile.Result{}, nil
+		}
 	}
 	if !status {
 		var started bool
 		if started, err = pkg.IsJustDeployStarted(dply, r.Client); err != nil {
+			if err == pkg.NewReplicaSetNotFound {
+				return ctrl.Result{Requeue: true}, nil
+			}
 			return ctrl.Result{}, err
 		}
+		fmt.Println("is just started?", started)
 		if !started {
 			return reconcile.Result{}, nil
 		} else {
@@ -72,8 +99,12 @@ func (r *DeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 	} else {
 		var finished bool
 		if finished, err = pkg.IsJustDeployFinished(dply, r.Client); err != nil {
+			if err == pkg.NewReplicaSetNotFound {
+				return ctrl.Result{Requeue: true}, nil
+			}
 			return reconcile.Result{}, err
 		} else {
+			fmt.Println("is just finished?", finished)
 			if !finished {
 				return reconcile.Result{}, nil
 			} else {

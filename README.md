@@ -10,5 +10,5 @@ You may not know the following two things about deployment.
 This tool solves these issues.
 
 This tool will allow you to keep track of the time it took to deploy.
-And you can use the API to easily see the status of your deployment.
+And you can use the GitHub Statuses API to easily see the status of your deployment.
 

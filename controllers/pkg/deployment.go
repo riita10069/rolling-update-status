@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
@@ -16,6 +17,11 @@ const (
 	ReplicaSetStatusAnnotation = "wantedly.com/deploy"
 	RevisionAnnotation         = "deployment.kubernetes.io/revision"
 	TimedOutReason             = "ProgressDeadlineExceeded"
+	RevisionNotFound           = "revision not found"
+)
+
+var (
+	NewReplicaSetNotFound = errors.New("new replicaset hasn't been made yet")
 )
 
 type RsListFunc func(string) ([]*appsv1.ReplicaSet, error)
@@ -38,9 +44,10 @@ func RolloutStatus(dply appsv1.Deployment) (string, bool, error) {
 	if revision > 0 {
 		condition := GetDeploymentCondition(dply.Status, appsv1.DeploymentProgressing)
 		if condition != nil && condition.Reason == TimedOutReason {
-			// Do you want to detect deployment failures?
-			// When code is running here, the deployment is failing, that's timed out.
-			return "Failed to Deploy", false, fmt.Errorf(TimedOutReason)
+			return TimedOutReason, false, nil
+		}
+		if dply.Status.UpdatedReplicas == 0 {
+			return "pending", false, nil
 		}
 		if *dply.Spec.Replicas != dply.Status.UpdatedReplicas {
 			return "pending", false, nil
@@ -52,7 +59,7 @@ func RolloutStatus(dply appsv1.Deployment) (string, bool, error) {
 			return "pending", false, nil
 		}
 	} else {
-		return "Failed", false, fmt.Errorf("revision is zero")
+		return RevisionNotFound, false, nil
 	}
 	return "success", true, err
 }
@@ -63,7 +70,8 @@ func IsJustDeployStarted(dply appsv1.Deployment, cli client.Client) (bool, error
 		return false, err
 	}
 	if newReplicaSet == nil {
-		return false, fmt.Errorf("new replicaset not found")
+		return false, NewReplicaSetNotFound
+
 	}
 	if newReplicaSet.Annotations == nil {
 		newReplicaSet.Annotations = make(map[string]string)
@@ -90,7 +98,7 @@ func IsJustDeployFinished(dply appsv1.Deployment, cli client.Client) (bool, erro
 		return false, err
 	}
 	if newReplicaSet == nil {
-		return false, fmt.Errorf("new replicaset not found")
+		return false, NewReplicaSetNotFound
 	}
 	if newReplicaSet.Annotations == nil {
 		newReplicaSet.Annotations = make(map[string]string)
@@ -109,6 +117,32 @@ func IsJustDeployFinished(dply appsv1.Deployment, cli client.Client) (bool, erro
 		return false, err
 	}
 	return false, fmt.Errorf("newest rs's annotation is strange value when success")
+}
+
+func IsJustDeployFailed(dply appsv1.Deployment, cli client.Client) (bool, error) {
+	newReplicaSet, err := GetNewReplicaSet(dply, cli)
+	if err != nil {
+		return false, err
+	}
+	if newReplicaSet == nil {
+		return false, NewReplicaSetNotFound
+	}
+	if newReplicaSet.Annotations == nil {
+		newReplicaSet.Annotations = make(map[string]string)
+	}
+	rsAnnotations := newReplicaSet.Annotations[ReplicaSetStatusAnnotation]
+	if rsAnnotations == "failed" {
+		return false, err
+	} else {
+		if SetReplicaSetStatusAnnotation(*newReplicaSet, "failed") {
+			if err = cli.Update(context.TODO(), newReplicaSet); err != nil {
+				return false, err
+			} else {
+				return true, err
+			}
+		}
+	}
+	return false, nil
 }
 
 func GetRevision(dply appsv1.Deployment) (int64, error) {
