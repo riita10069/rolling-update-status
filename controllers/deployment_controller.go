@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"github.com/pkg/errors"
 	"github.com/riita10069/rolling-update-status/controllers/pkg"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -49,7 +50,7 @@ func (r *DeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 	var dply appsv1.Deployment
 	err := r.Get(ctx, req.NamespacedName, &dply)
 	if err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, errors.WithStack(err)
 	}
 	r.StoreRepo = pkg.NewStore(dply)
 
@@ -62,53 +63,38 @@ func (r *DeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 		return reconcile.Result{}, err
 	}
 	if stmt == pkg.TimedOutReason {
-		var failed bool
-		if failed, err = pkg.IsJustDeployFailed(dply, r.Client); err != nil {
+		var ok bool
+		if ok, err = pkg.ValidateNewReplicaSet(dply, r.Client); err != nil {
 			if err == pkg.NewReplicaSetNotFound {
 				return ctrl.Result{Requeue: true}, err
 			} else {
 				return ctrl.Result{}, err
 			}
 		}
-		if !failed {
+		if !ok {
 			return ctrl.Result{}, nil
 		} else {
-			if err := r.StoreRepo.Create("failed", "error: timed out waiting for any update progress to be made"); err != nil {
+			if err := r.StoreRepo.Create("ok", "error: timed out waiting for any update progress to be made"); err != nil {
 				return ctrl.Result{}, err
 			}
 			return reconcile.Result{}, nil
 		}
 	}
 	if !status {
-		var started bool
-		if started, err = pkg.IsJustDeployStarted(dply, r.Client); err != nil {
-			if err == pkg.NewReplicaSetNotFound {
-				return ctrl.Result{Requeue: true}, nil
-			}
-			return ctrl.Result{}, err
-		}
-		fmt.Println("is just started?", started)
-		if !started {
-			return reconcile.Result{}, nil
-		} else {
-			if err := r.StoreRepo.Create("pending", "the cluster started the Rolling Update."); err != nil {
-				return ctrl.Result{}, err
-			}
-			return reconcile.Result{}, nil
-		}
+		return ctrl.Result{}, nil
 	} else {
-		var finished bool
-		if finished, err = pkg.IsJustDeployFinished(dply, r.Client); err != nil {
+		var ok bool
+		if ok, err = pkg.ValidateNewReplicaSet(dply, r.Client); err != nil {
 			if err == pkg.NewReplicaSetNotFound {
 				return ctrl.Result{Requeue: true}, nil
 			}
 			return reconcile.Result{}, err
 		} else {
-			fmt.Println("is just finished?", finished)
-			if !finished {
+			fmt.Println("is just ok?", ok)
+			if !ok {
 				return reconcile.Result{}, nil
 			} else {
-				if err = r.StoreRepo.Create("success", "the cluster finished the Rolling Update."); err != nil {
+				if err = r.StoreRepo.Create("success", "the cluster ok the Rolling Update."); err != nil {
 					return reconcile.Result{}, err
 				}
 				return reconcile.Result{}, nil
@@ -119,7 +105,7 @@ func (r *DeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 
 func (r *DeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	pred := predicate.Funcs{
-		CreateFunc:  func(event.CreateEvent) bool { return true },
+		CreateFunc:  func(event.CreateEvent) bool { return false },
 		DeleteFunc:  func(event.DeleteEvent) bool { return false },
 		UpdateFunc:  func(event.UpdateEvent) bool { return true },
 		GenericFunc: func(event.GenericEvent) bool { return false },

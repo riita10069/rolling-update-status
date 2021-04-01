@@ -64,35 +64,7 @@ func RolloutStatus(dply appsv1.Deployment) (string, bool, error) {
 	return "success", true, err
 }
 
-func IsJustDeployStarted(dply appsv1.Deployment, cli client.Client) (bool, error) {
-	newReplicaSet, err := GetNewReplicaSet(dply, cli)
-	if err != nil {
-		return false, err
-	}
-	if newReplicaSet == nil {
-		return false, NewReplicaSetNotFound
-
-	}
-	if newReplicaSet.Annotations == nil {
-		newReplicaSet.Annotations = make(map[string]string)
-	}
-	rsAnnotations := newReplicaSet.Annotations[ReplicaSetStatusAnnotation]
-	if rsAnnotations == "" || rsAnnotations == "success" {
-		if SetReplicaSetStatusAnnotation(*newReplicaSet, "pending") {
-			if err = cli.Update(context.TODO(), newReplicaSet); err != nil {
-				return false, err
-			} else {
-				return true, nil
-			}
-		}
-	} else if rsAnnotations == "pending" {
-		// do nothing.
-		return false, nil
-	}
-	return false, fmt.Errorf("newest rs's annotation is strange value")
-}
-
-func IsJustDeployFinished(dply appsv1.Deployment, cli client.Client) (bool, error) {
+func ValidateNewReplicaSet(dply appsv1.Deployment, cli client.Client) (bool, error) {
 	newReplicaSet, err := GetNewReplicaSet(dply, cli)
 	if err != nil {
 		return false, err
@@ -103,46 +75,7 @@ func IsJustDeployFinished(dply appsv1.Deployment, cli client.Client) (bool, erro
 	if newReplicaSet.Annotations == nil {
 		newReplicaSet.Annotations = make(map[string]string)
 	}
-	rsAnnotations := newReplicaSet.Annotations[ReplicaSetStatusAnnotation]
-	if rsAnnotations == "pending" || rsAnnotations == "" {
-		if SetReplicaSetStatusAnnotation(*newReplicaSet, "success") {
-			if err = cli.Update(context.TODO(), newReplicaSet); err != nil {
-				return false, err
-			} else {
-				return true, err
-			}
-		}
-	} else if rsAnnotations == "success" {
-		// do nothing
-		return false, err
-	}
-	return false, fmt.Errorf("newest rs's annotation is strange value when success")
-}
-
-func IsJustDeployFailed(dply appsv1.Deployment, cli client.Client) (bool, error) {
-	newReplicaSet, err := GetNewReplicaSet(dply, cli)
-	if err != nil {
-		return false, err
-	}
-	if newReplicaSet == nil {
-		return false, NewReplicaSetNotFound
-	}
-	if newReplicaSet.Annotations == nil {
-		newReplicaSet.Annotations = make(map[string]string)
-	}
-	rsAnnotations := newReplicaSet.Annotations[ReplicaSetStatusAnnotation]
-	if rsAnnotations == "failed" {
-		return false, err
-	} else {
-		if SetReplicaSetStatusAnnotation(*newReplicaSet, "failed") {
-			if err = cli.Update(context.TODO(), newReplicaSet); err != nil {
-				return false, err
-			} else {
-				return true, err
-			}
-		}
-	}
-	return false, nil
+	return true, err
 }
 
 func GetRevision(dply appsv1.Deployment) (int64, error) {
@@ -233,6 +166,7 @@ func SetReplicaSetStatusAnnotation(rs appsv1.ReplicaSet, status string) bool {
 
 	if rs.Annotations[ReplicaSetStatusAnnotation] != status {
 		rs.Annotations[ReplicaSetStatusAnnotation] = status
+		fmt.Println(rs.Name, "に対して、", status, "のAnnotationをつけた")
 		updated = true
 	}
 
