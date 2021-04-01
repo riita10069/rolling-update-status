@@ -19,17 +19,16 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	"github.com/riita10069/rolling-update-status/controllers/pkg"
-	"sigs.k8s.io/controller-runtime/pkg/event"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
-	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // DeploymentReconciler reconciles a Deployment object
@@ -54,6 +53,16 @@ func (r *DeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 	}
 	r.StoreRepo = pkg.NewStore(dply)
 
+	if ok, err := pkg.ValidateNewReplicaSet(dply, r.Client); err != nil {
+		if err == pkg.NewReplicaSetNotFound {
+			return ctrl.Result{Requeue: true}, nil
+		} else {
+			if !ok {
+				return ctrl.Result{}, nil
+			}
+		}
+	}
+
 	stmt, status, err := pkg.RolloutStatus(dply)
 	fmt.Println("rollout status", stmt, status)
 	if stmt == pkg.RevisionNotFound {
@@ -63,43 +72,18 @@ func (r *DeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 		return reconcile.Result{}, err
 	}
 	if stmt == pkg.TimedOutReason {
-		var ok bool
-		if ok, err = pkg.ValidateNewReplicaSet(dply, r.Client); err != nil {
-			if err == pkg.NewReplicaSetNotFound {
-				return ctrl.Result{Requeue: true}, err
-			} else {
-				return ctrl.Result{}, err
-			}
+		if err := r.StoreRepo.Create("ok", "error: timed out waiting for any update progress to be made"); err != nil {
+			return ctrl.Result{}, err
 		}
-		if !ok {
-			return ctrl.Result{}, nil
-		} else {
-			if err := r.StoreRepo.Create("ok", "error: timed out waiting for any update progress to be made"); err != nil {
-				return ctrl.Result{}, err
-			}
-			return reconcile.Result{}, nil
-		}
+		return reconcile.Result{}, nil
 	}
 	if !status {
 		return ctrl.Result{}, nil
 	} else {
-		var ok bool
-		if ok, err = pkg.ValidateNewReplicaSet(dply, r.Client); err != nil {
-			if err == pkg.NewReplicaSetNotFound {
-				return ctrl.Result{Requeue: true}, nil
-			}
+		if err = r.StoreRepo.Create("success", "the cluster ok the Rolling Update."); err != nil {
 			return reconcile.Result{}, err
-		} else {
-			fmt.Println("is just ok?", ok)
-			if !ok {
-				return reconcile.Result{}, nil
-			} else {
-				if err = r.StoreRepo.Create("success", "the cluster ok the Rolling Update."); err != nil {
-					return reconcile.Result{}, err
-				}
-				return reconcile.Result{}, nil
-			}
 		}
+		return reconcile.Result{}, nil
 	}
 }
 

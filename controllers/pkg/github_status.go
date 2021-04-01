@@ -56,7 +56,7 @@ func (gs GithubStatus) Create(state string, description string) error {
 	return nil
 }
 
-func(gs GithubStatus) CreatePending() error {
+func (gs GithubStatus) CreatePending() error {
 	rs := gs.rs
 	if rs.Annotations == nil {
 		rs.Annotations = make(map[string]string)
